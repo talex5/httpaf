@@ -660,8 +660,6 @@ end
 (** {2 Server Connection} *)
 
 module Server_connection : sig
-  type t
-
   type error =
     [ `Bad_request | `Bad_gateway | `Internal_server_error | `Exn of exn ]
 
@@ -670,81 +668,20 @@ module Server_connection : sig
   type error_handler =
     ?request:Request.t -> error -> (Headers.t -> [`write] Body.t) -> unit
 
-  val create
-    :  ?config:Config.t
-    -> ?error_handler:error_handler
-    -> request_handler
-    -> t
-  (** [create ?config ?error_handler ~request_handler] creates a connection
-      handler that will service individual requests with [request_handler]. *)
-
-  val next_read_operation : t -> [ `Read | `Yield | `Close ]
-  (** [next_read_operation t] returns a value describing the next operation
-      that the caller should conduct on behalf of the connection. *)
-
-  val read : t -> Bigstringaf.t -> off:int -> len:int -> int
-  (** [read t bigstring ~off ~len] reads bytes of input from the provided range
-      of [bigstring] and returns the number of bytes consumed by the
-      connection.  {!read} should be called after {!next_read_operation}
-      returns a [`Read] value and additional input is available for the
-      connection to consume. *)
-
-  val read_eof : t -> Bigstringaf.t -> off:int -> len:int -> int
-  (** [read_eof t bigstring ~off ~len] reads bytes of input from the provided 
-      range of [bigstring] and returns the number of bytes consumed by the
-      connection.  {!read_eof} should be called after {!next_read_operation}
-      returns a [`Read] and an EOF has been received from the communication
-      channel. The connection will attempt to consume any buffered input and
-      then shutdown the HTTP parser for the connection. *)
-
-  val yield_reader : t -> (unit -> unit) -> unit
-  (** [yield_reader t continue] registers with the connection to call
-      [continue] when reading should resume. {!yield_reader} should be called
-      after {next_read_operation} returns a [`Yield] value. *)
-
-  val next_write_operation : t -> [
-    | `Write of Bigstringaf.t IOVec.t list
-    | `Yield
-    | `Close of int ]
-  (** [next_write_operation t] returns a value describing the next operation
-      that the caller should conduct on behalf of the connection. *)
-
-  val report_write_result : t -> [`Ok of int | `Closed] -> unit
-  (** [report_write_result t result] reports the result of the latest write
-      attempt to the connection. {report_write_result} should be called after a
-      call to {next_write_operation} that returns a [`Write buffer] value.
-
-        {ul
-        {- [`Ok n] indicates that the caller successfully wrote [n] bytes of
-        output from the buffer that the caller was provided by
-        {next_write_operation}. }
-        {- [`Closed] indicates that the output destination will no longer
-        accept bytes from the write processor. }} *)
-
-  val yield_writer : t -> (unit -> unit) -> unit
-  (** [yield_writer t continue] registers with the connection to call
-      [continue] when writing should resume. {!yield_writer} should be called
-      after {next_write_operation} returns a [`Yield] value. *)
-
-  val report_exn : t -> exn -> unit
-  (** [report_exn t exn] reports that an error [exn] has been caught and
-      that it has been attributed to [t]. Calling this function will switch [t]
-      into an error state. Depending on the state [t] is transitioning from, it
-      may call its error handler before terminating the connection. *)
-
-  val is_closed : t -> bool
-  (** [is_closed t] is [true] if both the read and write processors have been
-      shutdown. When this is the case {!next_read_operation} will return
-      [`Close _] and {!next_write_operation} will return [`Write _] until all
-      buffered output has been flushed. *)
-
-  val error_code : t -> error option
-  (** [error_code t] returns the [error_code] that caused the connection to
-      close, if one exists. *)
-
-  (**/**)
-  val shutdown : t -> unit
-  (**/**)
+  val handle :
+    ?config:Config.t ->
+    ?error_handler:error_handler ->
+    read:(int -> Angstrom.bigstring * int * int * Angstrom.Unbuffered.more) ->
+    write:(Faraday.bigstring IOVec.t list -> [< `Closed | `Ok of int ]) ->
+    request_handler ->
+    (unit, [> `Bad_request of Request.t ]) result Angstrom.Unbuffered.parse_result
+  (** [handle ~read request_handler] handles an incoming HTTP connection.
+      It calls [read] as necessary to read from the connection, passing in the number
+      of bytes consumed since the last call. [read] should return a tuple
+      [(buf, off, len, more)], where the slice of [buf] from [off] to [off+len]
+      contains the previously unconsumed bytes plus at least one newly read byte.
+      [request_handler] is invoked to handle each HTTP request, once the headers
+      have been received. Processing of the request stream continues when it returns. *)
 end
 
 (** {2 Client Connection} *)

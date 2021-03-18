@@ -50,13 +50,16 @@ module Server = struct
       in
       let request_body  = Reqd.request_body reqd in
       let response_body = Reqd.respond_with_streaming reqd response in
+      let promise, resolver = Promise.create () in
       let rec on_read buffer ~off ~len =
         Body.write_bigstring response_body buffer ~off ~len;
         Body.schedule_read request_body ~on_eof ~on_read;
       and on_eof () =
-        Body.close_writer response_body
+        Body.close_writer response_body;
+        Promise.fulfill resolver ()
       in
-      Body.schedule_read (Reqd.request_body reqd) ~on_eof ~on_read
+      Body.schedule_read (Reqd.request_body reqd) ~on_eof ~on_read;
+      Promise.await promise
     | _ ->
       let headers = Headers.of_list [ "connection", "close" ] in
       Reqd.respond_with_string reqd (Response.create ~headers `Method_not_allowed) ""

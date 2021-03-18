@@ -2,5 +2,5 @@
  (name        httpaf)
  (public_name httpaf)
  (libraries
-   angstrom faraday bigstringaf result)
+   angstrom faraday bigstringaf result promise eunix)
  (flags (:standard -safe-string)))

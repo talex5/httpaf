@@ -195,4 +195,19 @@ module Writer = struct
     | `Close         -> `Close (drained_bytes t)
     | `Yield         -> `Yield
     | `Writev iovecs -> `Write iovecs
+
+  let run ~write t =
+    let rec loop () =
+      match next t with
+      | `Close _ -> ()
+      | `Write io_vecs ->
+        report_result t (write io_vecs);
+        loop ()
+      | `Yield -> 
+        let promise, resolver = Promise.create ~label:"wake-writer" () in
+        t.wakeup <- Optional_thunk.some (Promise.fulfill resolver);
+        Promise.await promise;
+        loop ()
+    in
+    loop ()
 end

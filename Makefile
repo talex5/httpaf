@@ -1,4 +1,7 @@
-.PHONY: all build clean test examples
+.PHONY: all build clean test examples eio
+
+eio:
+	dune build @./examples/eio/all
 
 build:
 	dune build @install
