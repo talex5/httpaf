@@ -100,11 +100,8 @@ let handle ?(config=Config.default) ?(error_handler=default_error_handler)
     Reqd.create error_handler request request_body writer response_body_buffer
   in
   let writer_thread = Eunix.fork (fun () -> Writer.run ~write writer) in
-  match Angstrom.Unbuffered.parse (requests ~make_reqd handler) with
-  | x ->
-    Writer.close writer;
-    Writer.wakeup writer;
-    Promise.await writer_thread;
-    x
-  | effect (Angstrom.Unbuffered.Read committed) k ->
-    continue k (read committed)
+  let x = Angstrom.Unbuffered.parse ~read (requests ~make_reqd handler) in
+  Writer.close writer;
+  Writer.wakeup writer;
+  Promise.await writer_thread;
+  x

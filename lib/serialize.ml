@@ -204,7 +204,7 @@ module Writer = struct
         report_result t (write io_vecs);
         loop ()
       | `Yield -> 
-        let promise, resolver = Promise.create ~label:"wake-writer" () in
+        let promise, resolver = Promise.create () in
         t.wakeup <- Optional_thunk.some (Promise.fulfill resolver);
         Promise.await promise;
         loop ()

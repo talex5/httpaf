@@ -274,6 +274,9 @@ module Reader = struct
   let is_closed t =
     t.closed
 
+  effect Read : int -> (bigstring * int * int * Angstrom.Unbuffered.more)
+  let read c = perform (Read c)
+
   let read_with_more t bs ~off ~len more =
     (* Printf.printf "read_with_more: %S\n%!" (Bigstringaf.substring bs ~off ~len); *)
     begin match more with
@@ -285,7 +288,8 @@ module Reader = struct
       continue k (bs, off, len, more)
     | Fail _ -> 0
     | Done   ->
-      match AU.parse t.parser ~init:(bs, off, len, more) with
+      let init = ref (Some (bs, off, len, more)) in
+      match AU.parse t.parser ~read with
       | Done (committed, Ok ()) ->
         t.parse_state <- Done;
         committed
@@ -295,9 +299,14 @@ module Reader = struct
       | Fail (committed, marks, msg) ->
         t.parse_state <- Fail (`Parse (marks, msg));
         committed
-      | effect (AU.Read committed) k ->
-        t.parse_state <- Partial k;
-        committed
+      | effect (Read committed) k ->
+        match !init with
+        | None ->
+          t.parse_state <- Partial k;
+          committed
+        | Some i ->
+          init := None;
+          continue k i
   ;;
 
   let force_close t =

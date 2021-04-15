@@ -202,7 +202,6 @@ module Client = struct
     Eunix.fork_detach
       ~on_error:(fun ex -> Logs.err (fun f -> f "Error handling client connection: %a" Fmt.exn ex))
       (fun () ->
-         Ctf.label "handle connection";
          let read_thread =
            Eunix.fork (fun () ->
                try
