@@ -104,25 +104,22 @@ let read fd buffer =
   | exception End_of_file
   | exception Unix.Unix_error(Unix.ECONNRESET, _, _) -> `Eof
 
-let write fd buffer =
-  let buffer =
-    let { Faraday.buffer; off; len } = buffer in
-    Cstruct.of_bigarray buffer ~off ~len
-  in
+let cstruct_of_faraday { Faraday.buffer; off; len } = Cstruct.of_bigarray ~off ~len buffer
+
+let write fd iovecs =
   let chunk = Eunix.alloc () in
   Fun.protect ~finally:(fun () -> Eunix.free chunk) @@ fun () ->
   let bs = (Cstruct.of_bigarray (Uring.Region.to_bigstring chunk)) in
   let chunk_size = Cstruct.length bs in
-  let rec aux buffer =
-    if Cstruct.len buffer = 0 then ()
-    else (
-      let max_write = min (Cstruct.length buffer) chunk_size in
-      Cstruct.blit buffer 0 bs 0 max_write;                             (* todo: pipeline *)
-      Eunix.write fd chunk max_write;
-      aux (Cstruct.shift buffer max_write)
+  (* Fill [bs] from [src], flushing when full. *)
+  let rec aux src =
+    let avail, src = Cstruct.fillv ~dst:bs ~src in
+    if avail > 0 then (
+      Eunix.write fd chunk avail;
+      aux src
     )
   in
-  aux buffer
+  aux (List.map cstruct_of_faraday iovecs)
 
 let shutdown socket command =
   try Eunix.shutdown socket command
@@ -148,7 +145,7 @@ module Server = struct
         buffer, off, len, more
       in
       let write io_vectors =
-        match List.iter (write socket) io_vectors with
+        match write socket io_vectors with
         | () -> `Ok (List.fold_left (fun acc f -> acc + f.Faraday.len) 0 io_vectors)
         | exception Unix.Unix_error (Unix.EPIPE, _, _) -> `Closed
       in
@@ -184,7 +181,7 @@ module Client = struct
       match Client_connection.next_write_operation connection with
       | `Write io_vectors ->
         let result =
-          match List.iter (write socket) io_vectors with
+          match write socket io_vectors with
           | () -> `Ok (List.fold_left (fun acc f -> acc + f.Faraday.len) 0 io_vectors)
           | exception Unix.Unix_error (Unix.EPIPE, _, _) -> `Closed
         in
