@@ -206,10 +206,13 @@ module Writer = struct
         report_result t (write io_vecs);
         loop ()
       | `Yield -> 
+        t.wakeup <- Optional_thunk.some loop
+(*
         let promise, resolver = Promise.create () in
         t.wakeup <- Optional_thunk.some (Promise.fulfill resolver);
         Promise.await promise;
         loop ()
+*)
     in
     loop ()
 end
