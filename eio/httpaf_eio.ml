@@ -32,6 +32,8 @@
     POSSIBILITY OF SUCH DAMAGE.
   ----------------------------------------------------------------------------*)
 
+open Fibreslib
+
 module Buffer : sig
   type t
 
@@ -196,11 +198,11 @@ module Client = struct
         if Eunix.FD.is_open socket then shutdown socket Unix.SHUTDOWN_SEND;
         raise Exit
     in
-    Eunix.fork_detach
+    Fibre.fork_detach
       ~on_error:(fun ex -> Logs.err (fun f -> f "Error handling client connection: %a" Fmt.exn ex))
       (fun () ->
          let read_thread =
-           Eunix.fork (fun () ->
+           Fibre.fork (fun () ->
                try
                  read_loop ()
                with
@@ -211,7 +213,7 @@ module Client = struct
              )
          in
          let write_thread =
-           Eunix.fork (fun () ->
+           Fibre.fork (fun () ->
                try
                  write_loop ()
                with

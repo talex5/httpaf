@@ -87,6 +87,8 @@ let schedule_bigstring_chunk t chunk =
   write_crlf         t
 
 module Writer = struct
+  open Fibreslib
+
   type t =
     { buffer                : Bigstringaf.t
       (* The buffer that the encoder uses for buffered writes. Managed by the
