@@ -37,21 +37,23 @@ open Fibreslib
 module Buffer : sig
   type t
 
-  val create : int -> t
+  val create : Uring.Region.chunk -> t
 
   val get : t -> f:(Cstruct.t -> int) -> int
   val put : t -> f:(Cstruct.t -> int) -> int
   val commit : t -> int -> unit
   val peek : t -> Cstruct.t
+  val read : t -> Eunix.FD.t -> int
 end = struct
   type t =
-    { buffer      : Cstruct.t
+    { chunk       : Uring.Region.chunk
+    ; buffer      : Cstruct.t
     ; mutable off : int
     ; mutable len : int }
 
-  let create size =
-    let buffer = Cstruct.create size in
-    { buffer; off = 0; len = 0 }
+  let create chunk =
+    let buffer = Cstruct.of_bigarray (Uring.Region.to_bigstring chunk) in
+    { chunk; buffer; off = 0; len = 0 }
 
   let compress t =
     if t.len = 0
@@ -86,22 +88,16 @@ end = struct
     t.len <- t.len - n;
     if t.len = 0
     then t.off <- 0
+
+  let read t fd =
+    compress t;
+    let n = Eunix.read_upto fd t.chunk (Uring.Region.length t.chunk - t.len) in
+    t.len <- t.len + n;
+    n
 end
 
 let read fd buffer =
-  let chunk = Eunix.alloc () in
-  Fun.protect ~finally:(fun () -> Eunix.free chunk) @@ fun () ->
-  let bs = Uring.Region.to_bigstring chunk in
-  let chunk_size = Bigarray.Array1.dim bs in
-  match
-    Buffer.put buffer ~f:(fun dst ->
-        let max_read = min (Cstruct.length dst) chunk_size in
-        let got = Eunix.read_upto fd chunk max_read in
-        let tmp = Cstruct.of_bigarray bs in
-        Cstruct.blit tmp 0 dst 0 got;
-        got
-      )
-  with
+  match Buffer.read buffer fd with
   | got -> `Ok got
   | exception End_of_file
   | exception Unix.Unix_error(Unix.ECONNRESET, _, _) -> `Eof
@@ -135,13 +131,15 @@ module Server = struct
       let module Server_connection = Httpaf.Server_connection in
       let request_handler = request_handler client_addr in
       let error_handler = error_handler client_addr in
-      let read_buffer = Buffer.create config.read_buffer_size in
+      Eunix.with_chunk @@ fun read_chunk ->
+      let read_buffer = Buffer.create read_chunk in
       let read committed =
         Buffer.commit read_buffer committed;
         let more =
-          match read socket read_buffer with
-          | `Eof -> Angstrom.Unbuffered.Complete
-          | `Ok _ -> Angstrom.Unbuffered.Incomplete
+          match Buffer.read read_buffer socket with
+          | exception End_of_file
+          | exception Unix.Unix_error(Unix.ECONNRESET, _, _) -> Angstrom.Unbuffered.Complete
+          | _ -> Angstrom.Unbuffered.Incomplete
         in
         let { Cstruct.buffer; off; len } = Buffer.peek read_buffer in
         buffer, off, len, more
@@ -161,7 +159,8 @@ module Client = struct
     let module Client_connection = Httpaf.Client_connection in
     let request_body, connection =
       Client_connection.request ~config request ~error_handler ~response_handler in
-    let read_buffer = Buffer.create config.read_buffer_size in
+    Eunix.with_chunk @@ fun read_chunk ->
+    let read_buffer = Buffer.create read_chunk in
     let rec read_loop () =
       match Client_connection.next_read_operation connection with
       | `Read ->
