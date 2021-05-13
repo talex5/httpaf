@@ -671,17 +671,19 @@ module Server_connection : sig
   val handle :
     ?config:Config.t ->
     ?error_handler:error_handler ->
+    sw:Fibreslib.Switch.t ->
     read:(int -> Angstrom.bigstring * int * int * Angstrom.Unbuffered.more) ->
     write:(Faraday.bigstring IOVec.t list -> [< `Closed | `Ok of int ]) ->
     request_handler ->
     (unit, [> `Bad_request of Request.t ]) result Angstrom.Unbuffered.parse_result
-  (** [handle ~read request_handler] handles an incoming HTTP connection.
+  (** [handle ~sw ~read request_handler] handles an incoming HTTP connection.
       It calls [read] as necessary to read from the connection, passing in the number
       of bytes consumed since the last call. [read] should return a tuple
       [(buf, off, len, more)], where the slice of [buf] from [off] to [off+len]
       contains the previously unconsumed bytes plus at least one newly read byte.
       [request_handler] is invoked to handle each HTTP request, once the headers
-      have been received. Processing of the request stream continues when it returns. *)
+      have been received. Processing of the request stream continues when it returns.
+      On error, [sw] is turned off. *)
 end
 
 (** {2 Client Connection} *)

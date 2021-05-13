@@ -56,7 +56,7 @@ let default_error_handler ?request:_ error handle =
   Body.close_writer body
 ;;
 
-let requests ~make_reqd handler =
+let requests ~sw ~make_reqd handler =
   let open Angstrom in
   fix @@ fun requests ->
   Parse.request <* commit >>= fun request ->
@@ -79,13 +79,14 @@ let requests ~make_reqd handler =
   | `Fixed _ | `Chunked | `Close_delimited as encoding ->
     let request_body = Body.create_reader Bigstringaf.empty in
     let reqd = make_reqd request request_body in
-    let request_done = Fibre.fork (fun () -> handler reqd) in
+    let request_done = Fibre.fork ~sw ~exn_turn_off:true (fun () -> handler reqd) in
     Parse.body ~encoding request_body >>= fun () ->
     Promise.await request_done;
     k reqd
 ;;
 
 let handle ?(config=Config.default) ?(error_handler=default_error_handler)
+    ~sw
     ~(read:int -> Angstrom.bigstring * int * int * Reader.AU.more)
     ~write
     handler =
@@ -100,9 +101,8 @@ let handle ?(config=Config.default) ?(error_handler=default_error_handler)
   let make_reqd request request_body =
     Reqd.create error_handler request request_body writer response_body_buffer
   in
-  let writer_thread = Fibre.fork (fun () -> Writer.run ~write writer) in
-  let x = Angstrom.Unbuffered.parse ~read (requests ~make_reqd handler) in
+  Fibre.fork_ignore ~sw (fun () -> Writer.run ~write writer);
+  let x = Angstrom.Unbuffered.parse ~read (requests ~sw ~make_reqd handler) in
   Writer.close writer;
   Writer.wakeup writer;
-  Promise.await writer_thread;
   x

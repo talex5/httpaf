@@ -126,7 +126,7 @@ let shutdown socket command =
 module Config = Httpaf.Config
 
 module Server = struct
-  let create_connection_handler ?(config=Config.default) ~request_handler ~error_handler =
+  let create_connection_handler ?(config=Config.default) ~sw ~request_handler ~error_handler =
     fun client_addr socket ->
       let module Server_connection = Httpaf.Server_connection in
       let request_handler = request_handler client_addr in
@@ -149,13 +149,13 @@ module Server = struct
         | () -> `Ok (List.fold_left (fun acc f -> acc + f.Faraday.len) 0 io_vectors)
         | exception Unix.Unix_error (Unix.EPIPE, _, _) -> `Closed
       in
-      let _ = Server_connection.handle ~error_handler ~read ~write request_handler in
+      let _ = Server_connection.handle ~sw ~error_handler ~read ~write request_handler in
       Eunix.FD.close socket
 end
 
 
 module Client = struct
-  let request ?(config=Config.default) socket request ~error_handler ~response_handler =
+  let request ?(config=Config.default) ~sw socket request ~error_handler ~response_handler =
     let module Client_connection = Httpaf.Client_connection in
     let request_body, connection =
       Client_connection.request ~config request ~error_handler ~response_handler in
@@ -197,34 +197,25 @@ module Client = struct
         if Eunix.FD.is_open socket then shutdown socket Unix.SHUTDOWN_SEND;
         raise Exit
     in
-    Fibre.fork_detach
-      ~on_error:(fun ex -> Logs.err (fun f -> f "Error handling client connection: %a" Fmt.exn ex))
+    Fibre.both ~sw
       (fun () ->
-         let read_thread =
-           Fibre.fork (fun () ->
-               try
-                 read_loop ()
-               with
-               | Exit -> Logs.info (fun f -> f "Read loop done")
-               | ex ->
-                 Logs.warn (fun f -> f "Error reading from connection: %a" Fmt.exn ex);
-                 Client_connection.report_exn connection ex
-             )
-         in
-         let write_thread =
-           Fibre.fork (fun () ->
-               try
-                 write_loop ()
-               with
-               | Exit -> Logs.info (fun f -> f "Write loop done")
-               | ex ->
-                 Logs.warn (fun f -> f "Error writing to connection: %a" Fmt.exn ex);
-                 Client_connection.report_exn connection ex
-             )
-         in
-         Promise.await read_thread;
-         Promise.await write_thread;
-         Eunix.FD.close socket;
+         try
+           read_loop ()
+         with
+         | Exit -> Logs.info (fun f -> f "Read loop done")
+         | ex ->
+           Logs.warn (fun f -> f "Error reading from connection: %a" Fmt.exn ex);
+           Client_connection.report_exn connection ex
+      )
+      (fun () ->
+         try
+           write_loop ()
+         with
+         | Exit -> Logs.info (fun f -> f "Write loop done")
+         | ex ->
+           Logs.warn (fun f -> f "Error writing to connection: %a" Fmt.exn ex);
+           Client_connection.report_exn connection ex
       );
+    Eunix.FD.close socket;
     request_body
 end

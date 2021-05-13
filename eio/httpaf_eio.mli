@@ -40,6 +40,7 @@ open Httpaf
 module Server : sig
   val create_connection_handler
     :  ?config         : Config.t
+    -> sw              : Fibreslib.Switch.t
     -> request_handler : (Unix.sockaddr -> Server_connection.request_handler)
     -> error_handler   : (Unix.sockaddr -> Server_connection.error_handler)
     -> Unix.sockaddr
@@ -50,6 +51,7 @@ end
 module Client : sig
   val request
     :  ?config          : Httpaf.Config.t
+    -> sw               : Fibreslib.Switch.t
     -> Eunix.FD.t
     -> Request.t
     -> error_handler    : Client_connection.error_handler
