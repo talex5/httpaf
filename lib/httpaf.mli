@@ -675,7 +675,7 @@ module Server_connection : sig
     read:(int -> Angstrom.bigstring * int * int * Angstrom.Unbuffered.more) ->
     write:(Faraday.bigstring IOVec.t list -> [< `Closed | `Ok of int ]) ->
     request_handler ->
-    (unit, [> `Bad_request of Request.t ]) result Angstrom.Unbuffered.parse_result
+    unit
   (** [handle ~sw ~read request_handler] handles an incoming HTTP connection.
       It calls [read] as necessary to read from the connection, passing in the number
       of bytes consumed since the last call. [read] should return a tuple

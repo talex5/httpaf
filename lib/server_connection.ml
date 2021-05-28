@@ -59,30 +59,33 @@ let default_error_handler ?request:_ error handle =
 let requests ~sw ~make_reqd handler =
   let open Angstrom in
   fix @@ fun requests ->
-  Parse.request <* commit >>= fun request ->
-  let k reqd =
-    Reqd.flush_response_body reqd;
-    assert (Reqd.is_complete reqd);
-    Writer.wakeup reqd.writer;
-    if Reqd.persistent_connection reqd then (
-      requests
-    ) else (
-      Angstrom.return (Ok ())
-    )
-  in
-  match Request.body_length request with
-  | `Error `Bad_request -> return (Error (`Bad_request request))
-  | `Fixed 0L  ->
-    let reqd = make_reqd request Body.empty in
-    handler reqd;
-    k reqd
-  | `Fixed _ | `Chunked | `Close_delimited as encoding ->
-    let request_body = Body.create_reader Bigstringaf.empty in
-    let reqd = make_reqd request request_body in
-    let request_done = Fibre.fork ~sw ~exn_turn_off:true (fun () -> handler reqd) in
-    Parse.body ~encoding request_body >>= fun () ->
-    Promise.await request_done;
-    k reqd
+  Parse.at_end_of_input >>= function
+  | true -> Angstrom.return (Ok ())
+  | false ->
+    Parse.request <* commit >>= fun request ->
+    let k reqd =
+      Reqd.flush_response_body reqd;
+      Writer.wakeup reqd.writer;
+      assert (Reqd.is_complete reqd);
+      if Reqd.persistent_connection reqd then (
+        requests
+      ) else (
+        Angstrom.return (Ok ())
+      )
+    in
+    match Request.body_length request with
+    | `Error `Bad_request -> return (Error (`Bad_request request))
+    | `Fixed 0L  ->
+      let reqd = make_reqd request Body.empty in
+      handler reqd;
+      k reqd
+    | `Fixed _ | `Chunked | `Close_delimited as encoding ->
+      let request_body = Body.create_reader Bigstringaf.empty in
+      let reqd = make_reqd request request_body in
+      let request_done = Fibre.fork ~sw ~exn_turn_off:true (fun () -> handler reqd) in
+      Parse.body ~encoding request_body >>= fun () ->
+      Promise.await request_done;
+      k reqd
 ;;
 
 let handle ?(config=Config.default) ?(error_handler=default_error_handler)
@@ -103,6 +106,19 @@ let handle ?(config=Config.default) ?(error_handler=default_error_handler)
   in
   Fibre.fork_ignore ~sw (fun () -> Writer.run ~write writer);
   let x = Angstrom.Unbuffered.parse ~read (requests ~sw ~make_reqd handler) in
+  begin match Angstrom.Unbuffered.state_to_result x with
+    | Ok (Ok ()) -> ()
+    | Ok (Error (`Bad_request request)) ->
+      error_handler ~request `Bad_request (fun headers ->
+          Writer.write_response writer (Response.create ~headers `Bad_request);
+          Body.writer_of_faraday (Writer.faraday writer)
+            ~when_ready_to_write:(fun () -> Writer.wakeup writer))
+    | Error msg ->
+      print_endline msg;
+      error_handler `Bad_request (fun headers ->
+          Writer.write_response writer (Response.create ~headers `Bad_request);
+          Body.writer_of_faraday (Writer.faraday writer)
+            ~when_ready_to_write:(fun () -> Writer.wakeup writer))
+  end;
   Writer.close writer;
-  Writer.wakeup writer;
-  x
+  Writer.wakeup writer

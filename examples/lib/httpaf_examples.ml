@@ -1,5 +1,6 @@
 open Base
 open Httpaf
+open Fibreslib
 module Format = Caml.Format
 
 let print_string = Stdio.(Out_channel.output_string stdout)

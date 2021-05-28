@@ -1,33 +1,31 @@
 module Arg = Caml.Arg
 
 open Httpaf_eio
+open Fibreslib
 
 let request_handler (_ : Unix.sockaddr) = Httpaf_examples.Server.echo_post
 let error_handler (_ : Unix.sockaddr) = Httpaf_examples.Server.error_handler
 
-let main port =
+let log_connection_error ex =
+  traceln "Uncaught exception handling client: %a" Fmt.exn ex
+
+let main ~network port =
   let listen_address = Unix.(ADDR_INET (inet_addr_loopback, port)) in
-  let socket = Unix.(socket PF_INET SOCK_STREAM 0) in
-  Unix.setsockopt socket Unix.SO_REUSEADDR true;
-  Unix.bind socket listen_address;
-  Unix.listen socket 5;
-  let socket = Eunix.of_unix_file_descr socket in
+  let socket = Eio.Network.bind network listen_address ~reuse_addr:true in
+  Eio.Network.Listening_socket.listen socket 5;
   let handler = Server.create_connection_handler ~request_handler ~error_handler in
   Stdio.printf "Listening on port %i and echoing POST requests.\n" port;
   Stdio.printf "To send a POST request, try one of the following\n\n";
   Stdio.printf "  echo \"Testing echo POST\" | dune exec examples/eio/eio_post.exe\n";
   Stdio.printf "  echo \"Testing echo POST\" | dune exec examples/lwt/lwt_post.exe\n";
   Stdio.printf "  echo \"Testing echo POST\" | curl -XPOST --data @- http://localhost:%d\n\n%!" port;
-  let rec loop () =
-    let client_socket, client_addr = Eunix.accept socket in
-    let _ = Eunix.fork (fun () -> (* XXX: handle errors! *)
-        try handler client_addr client_socket
-        with ex -> Logs.err (fun f -> f "Uncaught exception handling client: %a" Fmt.exn ex)
+  Switch.top @@ fun sw ->
+  while true do
+    Eio.Network.Listening_socket.accept_sub socket ~sw ~on_error:log_connection_error (fun ~sw client_sock client_addr ->
+        Fun.protect (fun () -> handler ~sw client_addr client_sock)
+          ~finally:(fun () -> Eio.Flow.close client_sock)
       )
-    in
-    loop ()
-  in
-  loop ()
+  done
 
 let () =
   let port = ref 8080 in
@@ -35,4 +33,6 @@ let () =
     ["-p", Arg.Set_int port, " Listening port number (8080 by default)"]
     ignore
     "Echoes POST requests. Runs forever.";
-  Eunix.run (fun () -> main !port)
+  Eunix.run @@ fun env ->
+  main !port
+    ~network:(Eio.Stdenv.network env)

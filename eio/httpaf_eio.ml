@@ -40,10 +40,9 @@ module Buffer : sig
   val create : Uring.Region.chunk -> t
 
   val get : t -> f:(Cstruct.t -> int) -> int
-  val put : t -> f:(Cstruct.t -> int) -> int
   val commit : t -> int -> unit
   val peek : t -> Cstruct.t
-  val read : t -> Eunix.FD.t -> int
+  val read : t -> #Eio.Flow.source -> int
 end = struct
   type t =
     { chunk       : Uring.Region.chunk
@@ -77,57 +76,36 @@ end = struct
   let peek t =
     Cstruct.sub t.buffer t.off t.len
 
-  let put t ~f =
-    compress t;
-    let n = f (Cstruct.sub t.buffer (t.off + t.len) (Cstruct.length t.buffer - t.len)) in
-    t.len <- t.len + n;
-    n
-
   let commit t n =
     t.off <- t.off + n;
     t.len <- t.len - n;
     if t.len = 0
     then t.off <- 0
 
-  let read t fd =
+  let read t flow =
     compress t;
-    let n = Eunix.read_upto fd t.chunk (Uring.Region.length t.chunk - t.len) in
+    let n = Eio.Flow.read_into flow (Cstruct.shift t.buffer t.len) in
     t.len <- t.len + n;
     n
 end
 
-let read fd buffer =
-  match Buffer.read buffer fd with
+let read flow buffer =
+  match Buffer.read buffer flow with
   | got -> `Ok got
   | exception End_of_file
   | exception Unix.Unix_error(Unix.ECONNRESET, _, _) -> `Eof
 
 let cstruct_of_faraday { Faraday.buffer; off; len } = Cstruct.of_bigarray ~off ~len buffer
 
-let write fd iovecs =
-  let chunk = Eunix.alloc () in
-  Fun.protect ~finally:(fun () -> Eunix.free chunk) @@ fun () ->
-  let bs = (Cstruct.of_bigarray (Uring.Region.to_bigstring chunk)) in
-  let chunk_size = Cstruct.length bs in
-  (* Fill [bs] from [src], flushing when full. *)
-  let rec aux src =
-    let avail, src = Cstruct.fillv ~dst:bs ~src in
-    if avail > 0 then (
-      Eunix.write fd chunk avail;
-      aux src
-    )
-  in
-  aux (List.map cstruct_of_faraday iovecs)
-
-let shutdown socket command =
-  try Eunix.shutdown socket command
-  with Unix.Unix_error (Unix.ENOTCONN, _, _) -> ()
+let write flow iovecs =
+  let data = List.map cstruct_of_faraday iovecs in
+  Eio.Flow.write flow ~src:(Eio.Flow.cstruct_source data)
 
 module Config = Httpaf.Config
 
 module Server = struct
-  let create_connection_handler ?(config=Config.default) ~sw ~request_handler ~error_handler =
-    fun client_addr socket ->
+  let create_connection_handler ~request_handler ~error_handler =
+    fun ~sw client_addr (socket : #Eio.Flow.two_way) ->
       let module Server_connection = Httpaf.Server_connection in
       let request_handler = request_handler client_addr in
       let error_handler = error_handler client_addr in
@@ -149,12 +127,14 @@ module Server = struct
         | () -> `Ok (List.fold_left (fun acc f -> acc + f.Faraday.len) 0 io_vectors)
         | exception Unix.Unix_error (Unix.EPIPE, _, _) -> `Closed
       in
-      let _ = Server_connection.handle ~sw ~error_handler ~read ~write request_handler in
-      Eunix.FD.close socket
+      Server_connection.handle ~sw ~error_handler ~read ~write request_handler
 end
 
-
 module Client = struct
+  let shutdown socket cmd =
+    try Eio.Flow.shutdown socket cmd
+    with Unix.Unix_error(Unix.ENOTCONN, _, _) -> ()
+
   let request ?(config=Config.default) ~sw socket request ~error_handler ~response_handler =
     let module Client_connection = Httpaf.Client_connection in
     let request_body, connection =
@@ -175,7 +155,7 @@ module Client = struct
             read_loop ()
         end
       | `Close ->
-        if Eunix.FD.is_open socket then shutdown socket Unix.SHUTDOWN_RECEIVE;
+        shutdown socket Unix.SHUTDOWN_RECEIVE;
         raise Exit
     in
     let rec write_loop () =
@@ -194,10 +174,10 @@ module Client = struct
         Promise.await pause;
         write_loop ()
       | `Close _ ->
-        if Eunix.FD.is_open socket then shutdown socket Unix.SHUTDOWN_SEND;
+        shutdown socket Unix.SHUTDOWN_SEND;
         raise Exit
     in
-    Fibre.both ~sw
+    Fibre.fork_ignore ~sw
       (fun () ->
          try
            read_loop ()
@@ -206,7 +186,8 @@ module Client = struct
          | ex ->
            Logs.warn (fun f -> f "Error reading from connection: %a" Fmt.exn ex);
            Client_connection.report_exn connection ex
-      )
+      );
+    Fibre.fork_ignore ~sw
       (fun () ->
          try
            write_loop ()
@@ -216,6 +197,5 @@ module Client = struct
            Logs.warn (fun f -> f "Error writing to connection: %a" Fmt.exn ex);
            Client_connection.report_exn connection ex
       );
-    Eunix.FD.close socket;
     request_body
 end

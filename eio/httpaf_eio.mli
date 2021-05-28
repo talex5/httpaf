@@ -39,12 +39,11 @@ open Httpaf
    to handle new connections from {!Eunix.accept}. *)
 module Server : sig
   val create_connection_handler
-    :  ?config         : Config.t
-    -> sw              : Fibreslib.Switch.t
-    -> request_handler : (Unix.sockaddr -> Server_connection.request_handler)
+    :  request_handler : (Unix.sockaddr -> Server_connection.request_handler)
     -> error_handler   : (Unix.sockaddr -> Server_connection.error_handler)
+    -> sw              : Fibreslib.Switch.t
     -> Unix.sockaddr
-    -> Eunix.FD.t
+    -> #Eio.Flow.two_way
     -> unit
 end
 
@@ -52,7 +51,7 @@ module Client : sig
   val request
     :  ?config          : Httpaf.Config.t
     -> sw               : Fibreslib.Switch.t
-    -> Eunix.FD.t
+    -> #Eio.Flow.two_way
     -> Request.t
     -> error_handler    : Client_connection.error_handler
     -> response_handler : Client_connection.response_handler
