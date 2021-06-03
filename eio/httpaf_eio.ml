@@ -99,7 +99,7 @@ let cstruct_of_faraday { Faraday.buffer; off; len } = Cstruct.of_bigarray ~off ~
 
 let write flow iovecs =
   let data = List.map cstruct_of_faraday iovecs in
-  Eio.Flow.write flow ~src:(Eio.Flow.cstruct_source data)
+  Eio.Flow.copy (Eio.Flow.cstruct_source data) flow
 
 module Config = Httpaf.Config
 
