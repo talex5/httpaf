@@ -43,6 +43,7 @@
 
 
 open Result
+open Eio.Std
 
 (** {2 Basic HTTP Types} *)
 
@@ -671,7 +672,7 @@ module Server_connection : sig
   val handle :
     ?config:Config.t ->
     ?error_handler:error_handler ->
-    sw:Fibreslib.Switch.t ->
+    sw:Switch.t ->
     read:(int -> Angstrom.bigstring * int * int * Angstrom.Unbuffered.more) ->
     write:(Faraday.bigstring IOVec.t list -> [< `Closed | `Ok of int ]) ->
     request_handler ->

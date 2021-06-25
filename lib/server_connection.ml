@@ -35,7 +35,7 @@
 module Reader = Parse.Reader
 module Writer = Serialize.Writer
 
-open Fibreslib
+open Eio.Std
 
 type request_handler = Reqd.t -> unit
 

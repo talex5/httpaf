@@ -32,12 +32,12 @@
     POSSIBILITY OF SUCH DAMAGE.
   ----------------------------------------------------------------------------*)
 
-open Fibreslib
+open Eio.Std
 
 module Buffer : sig
   type t
 
-  val create : Uring.Region.chunk -> t
+  val create : int -> t
 
   val get : t -> f:(Cstruct.t -> int) -> int
   val commit : t -> int -> unit
@@ -45,14 +45,13 @@ module Buffer : sig
   val read : t -> #Eio.Flow.source -> int
 end = struct
   type t =
-    { chunk       : Uring.Region.chunk
-    ; buffer      : Cstruct.t
+    { buffer      : Cstruct.t
     ; mutable off : int
     ; mutable len : int }
 
-  let create chunk =
-    let buffer = Cstruct.of_bigarray (Uring.Region.to_bigstring chunk) in
-    { chunk; buffer; off = 0; len = 0 }
+  let create size =
+    let buffer = Cstruct.create size in
+    { buffer; off = 0; len = 0 }
 
   let compress t =
     if t.len = 0
@@ -103,14 +102,18 @@ let write flow iovecs =
 
 module Config = Httpaf.Config
 
+let unix_addr_of = function
+  | `Unix path -> Unix.ADDR_UNIX path
+  | `Tcp (host, port) -> Unix.ADDR_INET (host, port)
+
 module Server = struct
-  let create_connection_handler ~request_handler ~error_handler =
+  let create_connection_handler ?(config=Config.default) ~request_handler ~error_handler =
     fun ~sw client_addr (socket : #Eio.Flow.two_way) ->
       let module Server_connection = Httpaf.Server_connection in
+      let client_addr = unix_addr_of client_addr in
       let request_handler = request_handler client_addr in
       let error_handler = error_handler client_addr in
-      Eunix.with_chunk @@ fun read_chunk ->
-      let read_buffer = Buffer.create read_chunk in
+      let read_buffer = Buffer.create config.read_buffer_size in
       let read committed =
         Buffer.commit read_buffer committed;
         let more =
@@ -139,8 +142,7 @@ module Client = struct
     let module Client_connection = Httpaf.Client_connection in
     let request_body, connection =
       Client_connection.request ~config request ~error_handler ~response_handler in
-    Eunix.with_chunk @@ fun read_chunk ->
-    let read_buffer = Buffer.create read_chunk in
+    let read_buffer = Buffer.create config.read_buffer_size in
     let rec read_loop () =
       match Client_connection.next_read_operation connection with
       | `Read ->
@@ -155,7 +157,7 @@ module Client = struct
             read_loop ()
         end
       | `Close ->
-        shutdown socket Unix.SHUTDOWN_RECEIVE;
+        shutdown socket `Receive;
         raise Exit
     in
     let rec write_loop () =
@@ -174,7 +176,7 @@ module Client = struct
         Promise.await pause;
         write_loop ()
       | `Close _ ->
-        shutdown socket Unix.SHUTDOWN_SEND;
+        shutdown socket `Send;
         raise Exit
     in
     Fibre.fork_ignore ~sw
