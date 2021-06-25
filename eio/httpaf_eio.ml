@@ -32,7 +32,7 @@
     POSSIBILITY OF SUCH DAMAGE.
   ----------------------------------------------------------------------------*)
 
-open Fibreslib
+open Eio.Std
 
 module Buffer : sig
   type t
@@ -98,18 +98,24 @@ let read flow buffer =
 let cstruct_of_faraday { Faraday.buffer; off; len } = Cstruct.of_bigarray ~off ~len buffer
 
 let write flow iovecs =
+  let fd = Eio_linux.Objects.get_fd_opt flow |> Option.get in    (* XXX *)
   let data = List.map cstruct_of_faraday iovecs in
-  Eio.Flow.copy (Eio.Flow.cstruct_source data) flow
+  Eio_linux.writev fd data
 
 module Config = Httpaf.Config
+
+let unix_addr_of = function
+  | `Unix path -> Unix.ADDR_UNIX path
+  | `Tcp (host, port) -> Unix.ADDR_INET (host, port)
 
 module Server = struct
   let create_connection_handler ~request_handler ~error_handler =
     fun ~sw client_addr (socket : #Eio.Flow.two_way) ->
       let module Server_connection = Httpaf.Server_connection in
+      let client_addr = unix_addr_of client_addr in
       let request_handler = request_handler client_addr in
       let error_handler = error_handler client_addr in
-      Eunix.with_chunk @@ fun read_chunk ->
+      Eio_linux.with_chunk @@ fun read_chunk ->
       let read_buffer = Buffer.create read_chunk in
       let read committed =
         Buffer.commit read_buffer committed;
@@ -139,7 +145,7 @@ module Client = struct
     let module Client_connection = Httpaf.Client_connection in
     let request_body, connection =
       Client_connection.request ~config request ~error_handler ~response_handler in
-    Eunix.with_chunk @@ fun read_chunk ->
+    Eio_linux.with_chunk @@ fun read_chunk ->
     let read_buffer = Buffer.create read_chunk in
     let rec read_loop () =
       match Client_connection.next_read_operation connection with
@@ -155,7 +161,7 @@ module Client = struct
             read_loop ()
         end
       | `Close ->
-        shutdown socket Unix.SHUTDOWN_RECEIVE;
+        shutdown socket `Receive;
         raise Exit
     in
     let rec write_loop () =
@@ -174,7 +180,7 @@ module Client = struct
         Promise.await pause;
         write_loop ()
       | `Close _ ->
-        shutdown socket Unix.SHUTDOWN_SEND;
+        shutdown socket `Send;
         raise Exit
     in
     Fibre.fork_ignore ~sw

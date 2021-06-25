@@ -33,7 +33,7 @@
   ----------------------------------------------------------------------------*)
 
 open Httpaf
-
+open Eio.Std
 
 (* The function that results from [create_connection_handler request_handler error_handler] should be used
    to handle new connections from {!Eunix.accept}. *)
@@ -41,8 +41,8 @@ module Server : sig
   val create_connection_handler
     :  request_handler : (Unix.sockaddr -> Server_connection.request_handler)
     -> error_handler   : (Unix.sockaddr -> Server_connection.error_handler)
-    -> sw              : Fibreslib.Switch.t
-    -> Unix.sockaddr
+    -> sw              : Switch.t
+    -> Eio.Net.Sockaddr.t
     -> #Eio.Flow.two_way
     -> unit
 end
@@ -50,7 +50,7 @@ end
 module Client : sig
   val request
     :  ?config          : Httpaf.Config.t
-    -> sw               : Fibreslib.Switch.t
+    -> sw               : Switch.t
     -> #Eio.Flow.two_way
     -> Request.t
     -> error_handler    : Client_connection.error_handler
