@@ -92,7 +92,7 @@ let read flow buffer =
   match Buffer.read buffer flow with
   | got -> `Ok got
   | exception End_of_file
-  | exception Unix.Unix_error(Unix.ECONNRESET, _, _) -> `Eof
+  | exception Eio.Net.Connection_reset _ -> `Eof
 
 let cstruct_of_faraday { Faraday.buffer; off; len } = Cstruct.of_bigarray ~off ~len buffer
 
@@ -119,7 +119,7 @@ module Server = struct
         let more =
           match Buffer.read read_buffer socket with
           | exception End_of_file
-          | exception Unix.Unix_error(Unix.ECONNRESET, _, _) -> Angstrom.Unbuffered.Complete
+          | exception Eio.Net.Connection_reset _ -> Angstrom.Unbuffered.Complete
           | _ -> Angstrom.Unbuffered.Incomplete
         in
         let { Cstruct.buffer; off; len } = Buffer.peek read_buffer in
