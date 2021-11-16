@@ -204,6 +204,8 @@ let body ~encoding writer =
 module Reader = struct
   module AU = Angstrom.Unbuffered
 
+  open EffectHandlers
+
   type request_error = [
     | `Bad_request of Request.t
     | `Parse of string list * string ]
@@ -215,7 +217,7 @@ module Reader = struct
   type 'error parse_state =
     | Done
     | Fail    of 'error
-    | Partial of ((Bigstringaf.t * int * int * AU.more), int) continuation
+    | Partial of ((Bigstringaf.t * int * int * AU.more), int) Deep.continuation
 
   type 'error t =
     { parser              : (unit, 'error) result Angstrom.t
@@ -274,7 +276,7 @@ module Reader = struct
   let is_closed t =
     t.closed
 
-  effect Read : int -> (bigstring * int * int * Angstrom.Unbuffered.more)
+  type _ eff += Read : int -> (bigstring * int * int * Angstrom.Unbuffered.more) eff
   let read c = perform (Read c)
 
   let read_with_more t bs ~off ~len more =
@@ -285,28 +287,37 @@ module Reader = struct
     end;
     match t.parse_state with
     | Partial k ->
-      continue k (bs, off, len, more)
+      Deep.continue k (bs, off, len, more)
     | Fail _ -> 0
     | Done   ->
       let init = ref (Some (bs, off, len, more)) in
-      match AU.parse t.parser ~read with
-      | Done (committed, Ok ()) ->
-        t.parse_state <- Done;
-        committed
-      | Done (committed, Error error) ->
-        t.parse_state <- Fail error;
-        committed
-      | Fail (committed, marks, msg) ->
-        t.parse_state <- Fail (`Parse (marks, msg));
-        committed
-      | effect (Read committed) k ->
-        match !init with
-        | None ->
-          t.parse_state <- Partial k;
-          committed
-        | Some i ->
-          init := None;
-          continue k i
+      Deep.match_with (AU.parse ~read) t.parser
+        { Deep.retc = (function
+              | AU.Done (committed, Ok ()) ->
+                t.parse_state <- Done;
+                committed
+              | AU.Done (committed, Error error) ->
+                t.parse_state <- Fail error;
+                committed
+              | AU.Fail (committed, marks, msg) ->
+                t.parse_state <- Fail (`Parse (marks, msg));
+                committed
+            );
+          exnc = raise;
+          effc = fun (type a) (e: a eff) -> 
+            match e with 
+            | Read committed ->
+              Some (fun (k : (a,_) Deep.continuation) ->
+                  match !init with
+                  | None ->
+                    t.parse_state <- Partial k;
+                    committed
+                  | Some i ->
+                    init := None;
+                    Deep.continue k i
+                )
+            | _ -> None
+        }
   ;;
 
   let force_close t =

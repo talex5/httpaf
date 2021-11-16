@@ -39,13 +39,10 @@ open Eio.Std
    to handle new connections from {!Eunix.accept}. *)
 module Server : sig
   val create_connection_handler
-    :  ?config          : Httpaf.Config.t
-    -> request_handler : (Unix.sockaddr -> Server_connection.request_handler)
-    -> error_handler   : (Unix.sockaddr -> Server_connection.error_handler)
-    -> sw              : Switch.t
-    -> Eio.Net.Sockaddr.t
-    -> #Eio.Flow.two_way
-    -> unit
+    : ?config : Httpaf.Config.t
+    -> error_handler : (Unix.sockaddr -> Server_connection.error_handler)
+    -> (Unix.sockaddr -> Server_connection.request_handler)
+    -> (sw:Switch.t -> #Eio.Flow.two_way -> Eio.Net.Sockaddr.t -> unit)
 end
 
 module Client : sig
