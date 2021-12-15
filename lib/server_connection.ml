@@ -82,7 +82,7 @@ let requests ~sw ~make_reqd handler =
     | `Fixed _ | `Chunked | `Close_delimited as encoding ->
       let request_body = Body.create_reader Bigstringaf.empty in
       let reqd = make_reqd request request_body in
-      let request_done = Fibre.fork ~sw ~exn_turn_off:true (fun () -> handler reqd) in
+      let request_done = Fibre.fork_promise ~sw (fun () -> handler reqd) in
       Parse.body ~encoding request_body >>= fun () ->
       Promise.await request_done;
       k reqd
@@ -104,7 +104,7 @@ let handle ?(config=Config.default) ?(error_handler=default_error_handler)
   let make_reqd request request_body =
     Reqd.create error_handler request request_body writer response_body_buffer
   in
-  Fibre.fork_ignore ~sw (fun () -> Writer.run ~write writer);
+  Fibre.fork ~sw (fun () -> Writer.run ~write writer);
   let x = Angstrom.Unbuffered.parse ~read (requests ~sw ~make_reqd handler) in
   begin match Angstrom.Unbuffered.state_to_result x with
     | Ok (Ok ()) -> ()

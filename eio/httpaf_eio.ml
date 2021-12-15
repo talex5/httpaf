@@ -179,7 +179,7 @@ module Client = struct
         shutdown socket `Send;
         raise Exit
     in
-    Fibre.fork_ignore ~sw
+    Fibre.fork ~sw
       (fun () ->
          try
            read_loop ()
@@ -189,7 +189,7 @@ module Client = struct
            Logs.warn (fun f -> f "Error reading from connection: %a" Fmt.exn ex);
            Client_connection.report_exn connection ex
       );
-    Fibre.fork_ignore ~sw
+    Fibre.fork ~sw
       (fun () ->
          try
            write_loop ()
