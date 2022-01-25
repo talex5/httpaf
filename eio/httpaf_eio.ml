@@ -102,15 +102,10 @@ let write flow iovecs =
 
 module Config = Httpaf.Config
 
-let unix_addr_of = function
-  | `Unix path -> Unix.ADDR_UNIX path
-  | `Tcp (host, port) -> Unix.ADDR_INET (host, port)
-
 module Server = struct
   let create_connection_handler ?(config=Config.default) ~error_handler request_handler =
     fun ~sw (socket : #Eio.Flow.two_way) client_addr ->
       let module Server_connection = Httpaf.Server_connection in
-      let client_addr = unix_addr_of client_addr in
       let request_handler = request_handler client_addr in
       let error_handler = error_handler client_addr in
       let read_buffer = Buffer.create config.read_buffer_size in
