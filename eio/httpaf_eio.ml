@@ -83,7 +83,7 @@ end = struct
 
   let read t flow =
     compress t;
-    let n = Eio.Flow.read_into flow (Cstruct.shift t.buffer t.len) in
+    let n = Eio.Flow.read flow (Cstruct.shift t.buffer t.len) in
     t.len <- t.len + n;
     n
 end
@@ -167,7 +167,7 @@ module Client = struct
         write_loop ()
       | `Yield ->
         let pause, resume = Promise.create () in
-        Client_connection.yield_writer connection (fun () -> Promise.fulfill resume ());
+        Client_connection.yield_writer connection (fun () -> Promise.resolve resume ());
         Promise.await pause;
         write_loop ()
       | `Close _ ->

@@ -84,7 +84,7 @@ let requests ~sw ~make_reqd handler =
       let reqd = make_reqd request request_body in
       let request_done = Fibre.fork_promise ~sw (fun () -> handler reqd) in
       Parse.body ~encoding request_body >>= fun () ->
-      Promise.await request_done;
+      Promise.await_exn request_done;
       k reqd
 ;;
 
