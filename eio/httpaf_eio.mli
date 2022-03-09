@@ -40,9 +40,9 @@ open Eio.Std
 module Server : sig
   val create_connection_handler
     : ?config : Httpaf.Config.t
-    -> error_handler : (Eio.Net.Sockaddr.t -> Server_connection.error_handler)
-    -> (Eio.Net.Sockaddr.t -> Server_connection.request_handler)
-    -> (sw:Switch.t -> #Eio.Flow.two_way -> Eio.Net.Sockaddr.t -> unit)
+    -> error_handler : (Eio.Net.Sockaddr.stream -> Server_connection.error_handler)
+    -> (Eio.Net.Sockaddr.stream -> Server_connection.request_handler)
+    -> (sw:Switch.t -> #Eio.Flow.two_way -> Eio.Net.Sockaddr.stream -> unit)
 end
 
 module Client : sig
