@@ -204,7 +204,7 @@ let body ~encoding writer =
 module Reader = struct
   module AU = Angstrom.Unbuffered
 
-  open EffectHandlers
+  open Effect
 
   type request_error = [
     | `Bad_request of Request.t
@@ -276,7 +276,7 @@ module Reader = struct
   let is_closed t =
     t.closed
 
-  type _ eff += Read : int -> (bigstring * int * int * Angstrom.Unbuffered.more) eff
+  type _ Effect.t += Read : int -> (bigstring * int * int * Angstrom.Unbuffered.more) Effect.t
   let read c = perform (Read c)
 
   let read_with_more t bs ~off ~len more =
@@ -304,7 +304,7 @@ module Reader = struct
                 committed
             );
           exnc = raise;
-          effc = fun (type a) (e: a eff) -> 
+          effc = fun (type a) (e: a Effect.t) -> 
             match e with 
             | Read committed ->
               Some (fun (k : (a,_) Deep.continuation) ->
