@@ -88,25 +88,31 @@ let requests ~sw ~make_reqd handler =
       k reqd
 ;;
 
+let cstruct_of_faraday { Faraday.buffer; off; len } = Cstruct.of_bigarray ~off ~len buffer
+
+let write flow iovecs =
+  let data = List.map cstruct_of_faraday iovecs in
+  Eio.Flow.write flow data;
+  `Ok (List.fold_left (fun acc f -> acc + f.Faraday.len) 0 iovecs)
+
 let handle ?(config=Config.default) ?(error_handler=default_error_handler)
-    ~sw
-    ~(read:int -> Angstrom.bigstring * int * int * Reader.AU.more)
-    ~write
+    ~socket
     handler =
+  Switch.run @@ fun sw ->
   let
     { Config
     . response_buffer_size
     ; response_body_buffer_size
     ; _ } = config
   in
+  let read cs = Eio.Flow.read socket cs in
   let writer = Writer.create ~buffer_size:response_buffer_size () in
   let response_body_buffer = Bigstringaf.create response_body_buffer_size in
   let make_reqd request request_body =
     Reqd.create error_handler request request_body writer response_body_buffer
   in
-  Fibre.fork ~sw (fun () -> Writer.run ~write writer);
-  let x = Angstrom.Unbuffered.parse ~read (requests ~sw ~make_reqd handler) in
-  begin match Angstrom.Unbuffered.state_to_result x with
+  Fibre.fork ~sw (fun () -> Writer.run ~write:(write socket) writer);
+  begin match Angstrom.parse_reader (requests ~sw ~make_reqd handler) read ~consume:All with
     | Ok (Ok ()) -> ()
     | Ok (Error (`Bad_request request)) ->
       error_handler ~request `Bad_request (fun headers ->
@@ -119,6 +125,7 @@ let handle ?(config=Config.default) ?(error_handler=default_error_handler)
           Writer.write_response writer (Response.create ~headers `Bad_request);
           Body.writer_of_faraday (Writer.faraday writer)
             ~when_ready_to_write:(fun () -> Writer.wakeup writer))
+    | exception Eio.Io (Eio.Net.E Connection_reset _, _) -> ()
   end;
   Writer.close writer;
   Writer.wakeup writer

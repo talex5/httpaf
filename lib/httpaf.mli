@@ -672,9 +672,7 @@ module Server_connection : sig
   val handle :
     ?config:Config.t ->
     ?error_handler:error_handler ->
-    sw:Switch.t ->
-    read:(int -> Angstrom.bigstring * int * int * Angstrom.Unbuffered.more) ->
-    write:(Faraday.bigstring IOVec.t list -> [< `Closed | `Ok of int ]) ->
+    socket:#Eio.Flow.two_way ->
     request_handler ->
     unit
   (** [handle ~sw ~read request_handler] handles an incoming HTTP connection.

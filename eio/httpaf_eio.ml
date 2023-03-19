@@ -105,28 +105,10 @@ module Config = Httpaf.Config
 module Server = struct
   let create_connection_handler ?(config=Config.default) ~error_handler request_handler =
     fun (socket : #Eio.Flow.two_way) client_addr ->
-      Switch.run @@ fun sw ->
       let module Server_connection = Httpaf.Server_connection in
       let request_handler = request_handler client_addr in
       let error_handler = error_handler client_addr in
-      let read_buffer = Buffer.create config.read_buffer_size in
-      let read committed =
-        Buffer.commit read_buffer committed;
-        let more =
-          match Buffer.read read_buffer socket with
-          | exception End_of_file
-          | exception Eio.Io (Eio.Net.E Connection_reset _, _) -> Angstrom.Unbuffered.Complete
-          | _ -> Angstrom.Unbuffered.Incomplete
-        in
-        let { Cstruct.buffer; off; len } = Buffer.peek read_buffer in
-        buffer, off, len, more
-      in
-      let write io_vectors =
-        match write socket io_vectors with
-        | () -> `Ok (List.fold_left (fun acc f -> acc + f.Faraday.len) 0 io_vectors)
-        | exception Unix.Unix_error (Unix.EPIPE, _, _) -> `Closed
-      in
-      Server_connection.handle ~sw ~error_handler ~read ~write request_handler
+      Server_connection.handle ~error_handler ~socket request_handler
 end
 
 module Client = struct
